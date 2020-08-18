@@ -98,6 +98,10 @@ xmlescape() {
   echo $1 | ${SED} 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&#39;/g'
 }
 
+html2xhtml() {
+  echo $1 | ${SED} 's/<br>/<br \/>/g'
+}
+
 epub_metadata() {
   local input_file="$1"
   local metafile
@@ -559,7 +563,7 @@ opds_entry() {
   fi
 
   if [ "${description}" != "" ]; then
-    echo "<content type=\"html\">"${description}"</content>"
+    echo "<content type=\"html\">"$(html2xhtml "${description}")"</content>"
   fi
 
   if [ "${cover_file}" != "" ]; then
