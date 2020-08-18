@@ -329,7 +329,7 @@ doc_metadata() {
 cbr_metadata() {
   local input_file="$1"
 
-  mime_type="application/vnd.comicbook-rar"
+  mime_type="application/x-cbr"
 }
 
 # XXX TODO .acbf metadata?
@@ -337,7 +337,7 @@ cbr_metadata() {
 cbz_metadata() {
   local input_file="$1"
 
-  mime_type="application/vnd.comicbook+zip"
+  mime_type="application/x-cbz"
 }
 
 mobi_get_u32be() {
