@@ -215,13 +215,21 @@ pdf_metadata() {
 
   ${STRINGS} -a -t d "${input_file}" | ${GREP} -E ' trailer$' > ${pdf_trailer_locs}
 
-  while read trailer_offset trailer_match; do
-    if [ "${pdf_info_object_loc}" = "" ]; then
-      pdf_info_object_loc=$(${TAIL} -c +${trailer_offset} "${input_file}" | tr '\r' '\n' | pdf_scan_trailer_for Info)
-    fi
-  done < ${pdf_trailer_locs}
+  if [ $? = 0 ]; then
+    while read trailer_offset trailer_match; do
+      if [ "${pdf_info_object_loc}" = "" ]; then
+        pdf_info_object_loc=$(${TAIL} -c +${trailer_offset} "${input_file}" | tr '\r' '\n' | pdf_scan_trailer_for Info)
+      fi
+    done < ${pdf_trailer_locs}
 
-  rm -rf ${pdf_trailer_locs}
+    rm -rf ${pdf_trailer_locs}
+  else
+    local pdf_xref_object_offset
+
+    pdf_xref_object_offset=$( ${TAIL} -n 3 "${input_file}" | ${STRINGS} -a -n 2 | ${GREP} -A 1 "startxref" | ${TAIL} -n 1 )
+
+    pdf_info_object_loc=$(${TAIL} -c +${pdf_xref_object_offset} "${input_file}" | tr '\r' '\n' | pdf_scan_trailer_for Info)
+  fi
 
   debug Info ${pdf_info_object_loc}
 
@@ -240,6 +248,11 @@ pdf_metadata() {
   rm -rf ${pdf_object_locs}
 
   debug Info @ ${info_object_offset}
+
+  if [ "${info_object_offset}" = "" ]; then
+    debug No info object offset found
+    return
+  fi
 
   meta=$(${TAIL} -c +${info_object_offset} "${input_file}" | tr '\r' '\n' | tr '\377' ' ' |tr '\376' ' ' | pdf_scan_info_for Title)
   if [ "${meta}" != "" ]; then
