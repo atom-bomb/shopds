@@ -111,7 +111,6 @@ epub_metadata() {
   local meta
 
   mime_type="application/epub+zip"
-
   metafile=$(${UNZIP} -l "${input_file}" | ${GREP} -Eo '\b[^ ]*\.opf\b')
 
   if [ "${metafile}" = "" ]; then
@@ -126,6 +125,7 @@ epub_metadata() {
     metafound=$(${GREP} -Eo '<dc:'${meta}'>(.*)</dc:'${meta}'>' ${metatemp})
     if [ "${metafound}" != "" ]; then
       metafound=$(expr "$metafound" : '.*<dc:'${meta}'>\(.*\)</dc:'${meta}'>.*')
+      metafound=$(echo ${metafound} | ${SED} 's/"/\&qout;/g; s/'"'"'/\&#39;/g')
       eval ${meta}=\"${metafound}\"
     fi
   done
