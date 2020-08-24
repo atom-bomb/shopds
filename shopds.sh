@@ -13,7 +13,6 @@
 # pdf images
 # support lit, pdb
 # index by author or title
-# output an html index
 
 SCRIPTNAME=$0
 
@@ -48,6 +47,8 @@ CATALOG_TITLE="Local E-Books"
 CATALOG_AUTHOR=${SCRIPTNAME}
 CATALOG_OUTPUT_DIR=${PWD}
 CATALOG_OPDS_ROOT_FILENAME="opds"
+CATALOG_HTML_ROOT_FILENAME="index.html"
+CATALOG_ENABLE_HTML=0
 
 debug() {
   if [ "${VERBOSE}" = "1" ]; then
@@ -64,8 +65,10 @@ help_exit() {
   echo "${SCRIPTNAME} usage:" >&2
   echo "-h             : print this help and exit" >&2
   echo "-v             : verbose output" >&2
+  echo "-m             : generate an html index" >&2
   echo "-o [directory] : specify an alternate output directory" >&2
   echo "-r [filename]  : specify an alternate root filename" >&2
+  echo "-i [filename]  : specify an alternate html index filename" >&2
   echo "-t [title]     : specify an alternate catalog title" >&2
   echo "-a [author]    : specify an alternate catalog author" >&2
   echo "-d [directory] : specify an alternate directory to scan" >&2
@@ -140,10 +143,10 @@ epub_metadata() {
     debug ${description}
   fi
 
-  local cover_ref=$(${GREP} -Eo '<meta .*name="cover".*/>' $metatemp)
+  local cover_ref="$(${GREP} -Eo '<meta .*name="cover".*/>' $metatemp)"
   if [ "${cover_ref}" != "" ]; then
     cover_ref=$(expr "${cover_ref}" : '.*content="\(\S*\)".*')
-    local cover_item=$(${GREP} -Eo '<item .*id="'${cover_ref}'".*/>' $metatemp) 
+    local cover_item="$(${GREP} -Eo '<item .*id="'${cover_ref}'".*/>' $metatemp)"
     if [ "${cover_item}" != "" ]; then
       local cover_image=$(expr "${cover_item}" : '.*href="\(\S*\)".*')
       cover_type=$(expr "${cover_item}" : '.*media-type="\(\S*\)".*')
@@ -534,6 +537,79 @@ default_metadata() {
   creator=$( ${BASENAME} "$( ${DIRNAME} "$( ${READLINK} -f "${input_file}" )")")
 }
 
+html_catalog_header() {
+  echo '<html><head>'
+  echo "<title>${CATALOG_TITLE}</title>"
+  echo "<style>"
+  echo ".cover { width:80px; float: left }"
+  echo ".title { text-decoration: underline }"
+  echo ".entry { border-block-width:thin; border-clock-color:black; border-block-style:solid }"
+  echo ".content { font-style:italic }"
+  echo "</style>"
+  echo "</head><body>"
+}
+
+html_catalog_entry() {
+  if [ "${acquisition_href_list}" = "" ]; then
+    return
+  fi
+
+  echo "<div class=\"entry\"><p>"
+
+  if [ "${cover_file}" != "" ]; then
+    echo "<img src=\"${cover_file}\" alt=\"cover\" class=\"cover\"\">"
+  fi
+
+  if [ "${title}" != "" ]; then
+    echo "<p class=\"title\">$(xmlescape "${title}")</p>"
+  fi
+
+  if [ "${creator}" != "" ]; then
+    echo "<p class=\"creator\">$(xmlescape "${creator}")</p>"
+  fi
+
+  if [ "${publisher}" != "" ]; then
+    echo "<p class=\"publisher\">$(xmlescape "${publisher}")</p>" 
+  fi
+
+  if [ "${date}" != "" ]; then
+    echo "<p class=\"date\">${date}</p>"
+  fi
+
+  echo "</p>"
+
+
+  if [ "${description}" != "" ]; then
+    echo "<p class=\"description\">"$(html2xhtml "${description}")"</p>"
+  fi
+
+
+  local remaining_href_list="${acquisition_href_list}"
+  local remaining_type_list="${acquisition_type_list}"
+
+  while [ "${remaining_href_list}" != "" ]; do
+    this_href=${remaining_href_list%% *}
+    this_mime_type=${remaining_type_list%% *}
+
+    if [ "${this_href}" != "" ]; then
+      echo "<a href=\"${this_href}\" class=\"content\">"
+      echo "${this_mime_type}</a>"
+    fi
+
+    remaining_href_list=${remaining_href_list#* }
+    remaining_type_list=${remaining_type_list#* }
+    if [ "${remaining_href_list}" = "${this_href}" ]; then
+      remaining_href_list=""
+    fi
+  done
+
+  echo "</div>"
+}
+
+html_catalog_footer() {
+  echo "</body></html>"
+}
+
 opds_catalog_header() {
   echo '<?xml version="1.0" encoding="UTF-8"?>'
   echo '<feed xmlns="http://www.w3.org/2005/Atom"'
@@ -585,9 +661,12 @@ opds_entry() {
     echo " type=\"${cover_type}\"/>"
   fi
 
-  while [ "${acquisition_href_list}" != "" ]; do
-    this_href=${acquisition_href_list%% *}
-    this_mime_type=${acquisition_type_list%% *}
+  local remaining_href_list="${acquisition_href_list}"
+  local remaining_type_list="${acquisition_type_list}"
+
+  while [ "${remaining_href_list}" != "" ]; do
+    this_href=${remaining_href_list%% *}
+    this_mime_type=${remaining_type_list%% *}
 
     if [ "${this_href}" != "" ]; then
       echo "<link rel=\"http://opds-spec.org/acquisition\""
@@ -595,17 +674,17 @@ opds_entry() {
       echo " type=\"${this_mime_type}\"/>"
     fi
 
-    acquisition_href_list=${acquisition_href_list#* }
-    acquisition_type_list=${acquisition_type_list#* }
-    if [ "${acquisition_href_list}" = "${this_href}" ]; then
-      acquisition_href_list=""
+    remaining_href_list=${remaining_href_list#* }
+    remaining_type_list=${remaining_type_list#* }
+    if [ "${remaining_href_list}" = "${this_href}" ]; then
+      remaining_href_list=""
     fi
   done
 
   echo '</entry>'
 }
 
-while getopts ":vhd:t:a:o:" opt; do
+while getopts ":vhd:t:a:o:r:i:m" opt; do
   case $opt in
     v)
       VERBOSE=1
@@ -621,6 +700,15 @@ while getopts ":vhd:t:a:o:" opt; do
     r)
       CATALOG_OPDS_ROOT_FILENAME=${OPTARG}
       debug "Catalog OPDS root" ${CATALOG_OPDS_ROOT_FILENAME}
+      ;;
+    i)
+      CATALOG_HTML_ROOT_FILENAME=${OPTARG}
+      debug "Catalog HTML index" ${CATALOG_HTML_ROOT_FILENAME}
+      CATALOG_ENABLE_HTML=1
+      ;;
+    m)
+      debug "Catalog HTML index" ${CATALOG_HTML_ROOT_FILENAME}
+      CATALOG_ENABLE_HTML=1
       ;;
     t)
       CATALOG_TITLE=${OPTARG}
@@ -648,6 +736,10 @@ ${FIND} "${SCAN_DIR}" -type f | ${SORT} > ${SCAN_LIST_FILE}
 
 opds_catalog_header > ${CATALOG_OPDS_ROOT_FILENAME}
 
+if [ "${CATALOG_ENABLE_HTML}" = "1" ]; then
+  html_catalog_header > ${CATALOG_HTML_ROOT_FILENAME}
+fi
+
 LAST_FILE_NAME=""
 
 while read NEXT_FILE; do
@@ -657,6 +749,9 @@ while read NEXT_FILE; do
 
   if [ "${NEXT_FILE_NAME}" != "${LAST_FILE_NAME}" ]; then
     opds_entry >> ${CATALOG_OPDS_ROOT_FILENAME}
+    if [ "${CATALOG_ENABLE_HTML}" = "1" ]; then
+      html_catalog_entry >> ${CATALOG_HTML_ROOT_FILENAME}
+    fi
     reset_metadata
     LAST_FILE_NAME="${NEXT_FILE_NAME}"
     default_metadata "${NEXT_FILE}"
@@ -667,6 +762,14 @@ done < ${SCAN_LIST_FILE}
 
 opds_entry >> ${CATALOG_OPDS_ROOT_FILENAME}
 
+if [ "${CATALOG_ENABLE_HTML}" = "1" ]; then
+  html_catalog_entry >> ${CATALOG_HTML_ROOT_FILENAME}
+fi
+
 opds_catalog_footer >> ${CATALOG_OPDS_ROOT_FILENAME}
+
+if [ "${CATALOG_ENABLE_HTML}" = "1" ]; then
+  html_catalog_footer >> ${CATALOG_HTML_ROOT_FILENAME}
+fi
 
 rm -f ${SCAN_LIST_FILE}
