@@ -349,11 +349,23 @@ cbr_metadata() {
 }
 
 # XXX TODO .acbf metadata?
-# assume first file is the cover
 cbz_metadata() {
   local input_file="$1"
+  local cover_image
+  local title_hash
 
   mime_type="application/x-cbz"
+  cover_image="$(${UNZIP} -l "${input_file}" | ${GREP} -Eo '[0-9][ ]{3}.*cover\.jpg')"
+  if [ "${cover_image}" != "" ]; then
+    cover_image=$(expr "${cover_image}" : '[0-9]   \(.*cover\.jpg\)')
+    debug ${input_file} cover: ${cover_image}
+    title_hash=$(echo ${creator}${title} | ${MD5SUM})
+    title_hash=${title_hash%%  -}
+    mkdir -p opds_metadata/${title_hash}
+    cover_file=opds_metadata/${title_hash}/cover.jpg
+    cover_type=image/jpeg
+    ${UNZIP} -p "${input_file}" "*${cover_image}" > ${cover_file}
+  fi
 }
 
 mobi_get_u32be() {
