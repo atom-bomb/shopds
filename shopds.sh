@@ -10,7 +10,6 @@
 # include more metadata:
 # language
 # mobi images
-# pdf images
 # support lit, pdb
 # index by author or title
 
@@ -238,34 +237,55 @@ pdf_metadata() {
 
   if [ "${pdf_info_object_loc}" = "" ]; then
     debug No info object found
-    return
+  else
+    pdf_object_locs=$(${MKTEMP} -t pdfobjXXXXXX)
+
+    ${STRINGS} -a -t d "${input_file}" | ${GREP} -Eo '[[:digit:]]+ [[:digit:]]+ [[:digit:]]+ obj' > ${pdf_object_locs}
+
+    info_object_offset=$(${GREP} "${pdf_info_object_loc}" ${pdf_object_locs})
+    info_object_offset=$(expr "${info_object_offset}" : '\([[:digit:]]\+\) .*')
+
+    rm -rf ${pdf_object_locs}
+
+    debug Info @ ${info_object_offset}
+
+    if [ "${info_object_offset}" = "" ]; then
+      debug No info object offset found
+    else
+      meta=$(${TAIL} -c +${info_object_offset} "${input_file}" | tr '\r' '\n' | tr '\377' ' ' |tr '\376' ' ' | pdf_scan_info_for Title)
+      if [ "${meta}" != "" ]; then
+        title="${meta}"
+      fi
+
+      meta=$(${TAIL} -c +${info_object_offset} "${input_file}" | tr '\r' '\n' | tr '\377' ' ' |tr '\376' ' ' | pdf_scan_info_for Author)
+      if [ "${meta}" != "" ]; then
+        creator="${meta}"
+      fi
+    fi
   fi
 
-  pdf_object_locs=$(${MKTEMP} -t pdfobjXXXXXX)
+  local first_image_hdr
+  local first_image_hdr_length
+  local first_image_offset
+  local first_image_length
 
-  ${STRINGS} -a -t d "${input_file}" | ${GREP} -Eo '[[:digit:]]+ [[:digit:]]+ [[:digit:]]+ obj' > ${pdf_object_locs}
+  first_image_hdr=$(${STRINGS} -a -t d "${input_file}" | ${GREP} -m 1 '/Subtype/Image')
+  first_image_offset=$(expr "${first_image_hdr}" : '^[ ]*\([0-9]\+\) .*')
+  first_image_length=$(expr "${first_image_hdr}" : '^[ ]*[0-9]\+\ .*/Length \([0-9]\+\)')
+  first_image_hdr=$(expr "${first_image_hdr}" : '^[ ]*[0-9]\+ \(.*\)')
+  first_image_hdr_length=${#first_image_hdr}
 
-  info_object_offset=$(${GREP} "${pdf_info_object_loc}" ${pdf_object_locs})
-  info_object_offset=$(expr "${info_object_offset}" : '\([[:digit:]]\+\) .*')
+  if [ "${first_image_offset}" != "" ] && [ "${first_image_length}" != "" ]; then
+    first_image_offset=$(( ${first_image_offset} + ${first_image_hdr_length} + 3 ))
+    title_hash=$(echo ${creator}${title} | ${MD5SUM})
+    title_hash=${title_hash%%  -}
+    mkdir -p opds_metadata/${title_hash}
+    cover_file=opds_metadata/${title_hash}/cover.jpg
+    debug ${cover_file}
 
-  rm -rf ${pdf_object_locs}
-
-  debug Info @ ${info_object_offset}
-
-  if [ "${info_object_offset}" = "" ]; then
-    debug No info object offset found
-    return
+    ${TAIL} -c +${first_image_offset} "${input_file}" | ${HEAD} -c ${first_image_length} > ${cover_file}
   fi
 
-  meta=$(${TAIL} -c +${info_object_offset} "${input_file}" | tr '\r' '\n' | tr '\377' ' ' |tr '\376' ' ' | pdf_scan_info_for Title)
-  if [ "${meta}" != "" ]; then
-    author="${meta}"
-  fi
-
-  meta=$(${TAIL} -c +${info_object_offset} "${input_file}" | tr '\r' '\n' | tr '\377' ' ' |tr '\376' ' ' | pdf_scan_info_for Author)
-  if [ "${meta}" != "" ]; then
-    creator="${meta}"
-  fi
 }
 
 pdf_metadata_from_pdfinfo() {
@@ -553,9 +573,9 @@ html_catalog_header() {
   echo '<html><head>'
   echo "<title>${CATALOG_TITLE}</title>"
   echo "<style>"
-  echo ".cover { width:80px; float: left }"
+  echo ".cover { width:80px; float:left; position:relative; bottom:10px; }"
   echo ".title { text-decoration: underline }"
-  echo ".entry { border-block-width:thin; border-clock-color:black; border-block-style:solid }"
+  echo ".entry { border:thin; border-style:solid; clear:both; overflow:auto; }"
   echo ".content { font-style:italic }"
   echo "</style>"
   echo "</head><body>"
