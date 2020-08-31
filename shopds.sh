@@ -269,14 +269,24 @@ pdf_metadata() {
   local first_image_offset
   local first_image_length
 
-  first_image_hdr=$(${STRINGS} -a -t d "${input_file}" | ${GREP} -m 1 '/Subtype/Image')
+  # XXX TODO deal with \n or \r delimiters in object description
+  first_image_hdr=$(${STRINGS} -a -t d "${input_file}" | ${GREP} -E -m 1 '/Subtype ?/Image')
   first_image_offset=$(expr "${first_image_hdr}" : '^[ ]*\([0-9]\+\) .*')
   first_image_length=$(expr "${first_image_hdr}" : '^[ ]*[0-9]\+\ .*/Length \([0-9]\+\)')
   first_image_hdr=$(expr "${first_image_hdr}" : '^[ ]*[0-9]\+ \(.*\)')
   first_image_hdr_length=${#first_image_hdr}
 
-  if [ "${first_image_offset}" != "" ] && [ "${first_image_length}" != "" ]; then
-    first_image_offset=$(( ${first_image_offset} + ${first_image_hdr_length} + 3 ))
+  # only support jpeg images (for now)
+  if [ "${first_image_hdr##*/DCTDecode*}" = "" ] && [ "${first_image_offset}" != "" ] && [ "${first_image_length}" != "" ]; then
+    debug first_image_offset=${first_image_offset}
+    debug first_image_length=${first_image_length}
+    debug first_image_hdr=${first_image_hdr}
+    if [ "${first_image_hdr##*>>stream}" ]; then
+      first_image_offset=$(( ${first_image_offset} + ${first_image_hdr_length} + 9 ))
+    else
+      first_image_offset=$(( ${first_image_offset} + ${first_image_hdr_length} + 3 ))
+    fi
+
     title_hash=$(echo ${creator}${title} | ${MD5SUM})
     title_hash=${title_hash%%  -}
     mkdir -p opds_metadata/${title_hash}
