@@ -15,7 +15,7 @@
 
 SCRIPTNAME=$0
 
-TOOLS="grep basename dirname readlink date mktemp unzip sed head find sort md5sum tail strings hexdump"
+TOOLS="grep basename dirname readlink date mktemp unzip sed head find sort md5sum tail strings hexdump unrar"
 MISSING_TOOLS=""
 
 ucase() {
@@ -82,7 +82,7 @@ urlencode() {
   while [ ${i} -le ${#1} ]; do
     c=$(expr substr "$1" $i 1)
 #    c=${1:$i:1}
-    if [ "$c" = ")" ] || [ "$c" = "(" ]; then
+    if [ "$c" = ")" ] || [ "$c" = "(" ] || [ "$c" = "+" ]; then
       ok=0
     else
       ok=$(expr "$c" : '[a-zA-Z0-9\/\.\~\_\-]')
@@ -271,9 +271,9 @@ pdf_metadata() {
 
   # XXX TODO deal with \n or \r delimiters in object description
   first_image_hdr=$(${STRINGS} -a -t d "${input_file}" | ${GREP} -E -m 1 '/Subtype ?/Image')
-  first_image_offset=$(expr "${first_image_hdr}" : '^[ ]*\([0-9]\+\) .*')
-  first_image_length=$(expr "${first_image_hdr}" : '^[ ]*[0-9]\+\ .*/Length \([0-9]\+\)')
-  first_image_hdr=$(expr "${first_image_hdr}" : '^[ ]*[0-9]\+ \(.*\)')
+  first_image_offset=$(expr "${first_image_hdr}" : '[ ]*\([0-9]\+\) .*')
+  first_image_length=$(expr "${first_image_hdr}" : '[ ]*[0-9]\+\ .*/Length \([0-9]\+\)')
+  first_image_hdr=$(expr "${first_image_hdr}" : '[ ]*[0-9]\+ \(.*\)')
   first_image_hdr_length=${#first_image_hdr}
 
   # only support jpeg images (for now)
@@ -372,10 +372,86 @@ doc_metadata() {
   mime_type="application/msword"
 }
 
+comicinfo_xml_metadata() {
+  local metatemp=$1
+  local Title Volume Series Number Publisher Year Month Day Summary Credits
+  comicinfo_xml_metadata_tags="Title Volume Series Number Publisher Year Month Day Summary Credits"
+
+  for meta in ${comicinfo_xml_metadata_tags}; do
+    metafound=$(${GREP} -Eo '<'${meta}'>(.*)</'${meta}'>' ${metatemp})
+    if [ "${metafound}" != "" ]; then
+      metafound=$(expr "$metafound" : '.*<'${meta}'>\(.*\)</'${meta}'>.*')
+      metafound=$(echo ${metafound} | ${SED} 's/"/\&qout;/g; s/'"'"'/\&#39;/g')
+      eval ${meta}=\"${metafound}\"
+    fi
+  done
+
+  if [ "${Title}" != "" ]; then
+    title="${Title}"
+    debug "${title}"
+  fi
+
+  if [ "${Series}" != "" ]; then
+    if [ "${Volume}" != "" ]; then
+        title="${Series} ${Volume} ${Number}"
+    else
+      if [ "${Number}" != "" ]; then
+        title="${Series} ${Number}"
+      else
+        title="${Series}"
+      fi
+    fi
+    debug "${title}"
+  fi
+
+  if [ "${Publiser}" != "" ]; then
+    publisher="${Publiser}"
+    debug "${publisher}"
+  fi
+
+  if [ "${Credits}" != "" ]; then
+    creator="${Credits}"
+    debug "${creator}"
+  fi
+
+  if [ "${Summary}" != "" ]; then
+    description="${Summary}"
+    debug "${description}"
+  fi
+
+}
+
 cbr_metadata() {
   local input_file="$1"
+  local metafile
+  local metatemp
+  local cover_image
+  local title_hash
 
   mime_type="application/x-cbr"
+
+  metafile=$(${UNRAR} lb "${input_file}" | ${GREP} -iom 1 'comicinfo.xml')
+
+  if [ "${metafile}" != "" ]; then
+    metatemp=$(${MKTEMP} -t cbrmetaXXXXXX)
+    ${UNRAR} p -inul "${input_file}" "${metafile}" > ${metatemp}
+    comicinfo_xml_metadata "${metatemp}"
+    rm -f "${metatemp}"
+  fi
+
+  cover_image="$(${UNRAR} lb "${input_file}" | ${GREP} -Em 1 '000\.jpg$')"
+  if [ "${cover_image}" = "" ]; then
+    cover_image="$(${UNRAR} lb "${input_file}" | ${GREP} -Em 1 '\.jpg$')"
+  fi
+  if [ "${cover_image}" != "" ]; then
+    debug ${input_file} cover: ${cover_image}
+    title_hash=$(echo ${creator}${title} | ${MD5SUM})
+    title_hash=${title_hash%%  -}
+    mkdir -p opds_metadata/${title_hash}
+    cover_file=opds_metadata/${title_hash}/cover.jpg
+    cover_type=image/jpeg
+    ${UNRAR} p -inul "${input_file}" "${cover_image}" > ${cover_file}
+  fi
 }
 
 # XXX TODO .acbf metadata?
@@ -385,9 +461,30 @@ cbz_metadata() {
   local title_hash
 
   mime_type="application/x-cbz"
-  cover_image="$(${UNZIP} -l "${input_file}" | ${GREP} -Eo '[0-9][ ]{3}.*cover\.jpg')"
+#  cover_image="$(${UNZIP} -l "${input_file}" | ${GREP} -Eom 1 '[0-9][ ]{3}.*cover\.jpg')"
+
+#  if [ "${cover_image}" = "" ]; then
+#    cover_image="$(${UNZIP} -l "${input_file}" | ${GREP} -Eom 1 '[0-9][ ]{3}.*00[0-1]\.jpg')"
+#    if [ "${cover_image}" = "" ]; then
+#      cover_image="$(${UNZIP} -l "${input_file}" | ${GREP} -Eom 1 '[0-9][ ]{3}.*\.jpg')"
+#    fi
+#  fi
+
+  metafile=$(${UNZIP} -l "${input_file}" | ${GREP} -Eiom 1 '[0-9][ ]{3}?omic?nfo\.xml')
+
+  if [ "${metafile}" != "" ]; then
+    metafile=$(expr "${metafile}" : '[0-9]   \(.*\.xml\)')
+    metatemp=$(${MKTEMP} -t cbzmetaXXXXXX)
+    ${UNZIP} -p "${input_file}" "${metafile}" > ${metatemp}
+    comicinfo_xml_metadata "${metatemp}"
+    rm -f "${metatemp}"
+  fi
+
+  cover_image="$(${UNZIP} -l "${input_file}" | ${GREP} -Eom 1 '[0-9][ ]{3}.*\.jpg')"
+
   if [ "${cover_image}" != "" ]; then
-    cover_image=$(expr "${cover_image}" : '[0-9]   \(.*cover\.jpg\)')
+    cover_image=$(expr "${cover_image}" : '[0-9]   \(.*\.jpg\)')
+    cover_image=$(echo "${cover_image}" | ${SED} -e 's/\[/\?/g' -e 's/\]/\?/g')
     debug ${input_file} cover: ${cover_image}
     title_hash=$(echo ${creator}${title} | ${MD5SUM})
     title_hash=${title_hash%%  -}
